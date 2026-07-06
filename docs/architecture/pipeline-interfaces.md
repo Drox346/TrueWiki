@@ -1,12 +1,6 @@
 # Pipeline interfaces
 
-First draft of the data contracts between the main wiki compiler components.
-
-The goal is to make every arrow explicit without turning the architecture
-diagram into a wall of labels. Names here are provisional, but they should be
-stable enough to guide early code structure.
-
-## Interface map
+## Pipeline Map
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 34, "rankSpacing": 46}}}%%
@@ -15,67 +9,80 @@ flowchart TB
   watch[Watch sources]
   cache[(Fetch + cache)]
   extract[Extract fragments]
-  normalize[Normalize claims + overrides]
+  classify[LLM semantic classification]
+  normalize[Normalize structured records]
   planner[Rebuild planner]
   inputs[Resolution inputs]
-  resolve[(Resolve truth)]
+  resolve[(Resolve truth with rules)]
+  rules[(Authority rules)]
   compile[Compile wiki]
   serve[Serve locally]
   browse[Browse + review]
   curation[(Curation store)]
-  review[Review queue]
 
   sources -- SourceTarget --> watch
   watch -- ChangedSourceRef --> cache
   cache -- RawSourceRecord --> extract
+  extract -- SourceFragment --> classify
   extract -- SourceFragment --> normalize
-  normalize -- Claim / OverrideCandidate --> planner
+  classify -- StructuredCandidate --> normalize
+  curation -- CurationDecision --> normalize
+  normalize -- Records --> planner
   planner -- AffectedPagePlan --> inputs
-  curation -- CurationOverride --> inputs
+  rules -- AuthorityRule --> inputs
   inputs -- ResolutionInputBundle --> resolve
   resolve -- ResolvedPageModel --> compile
   compile -- CompiledPage --> serve
   serve --> browse
   browse -- CurationEdit --> curation
-  planner -- ReviewItem --> review
-  review -- ReviewItem --> browse
 ```
 
-## Arrow contracts
+## Boundary Contracts
 
-Cardinality describes payload counts per run or work unit, not the number of
-component instances.
-
-| From | To | Interface | Cardinality | Persisted? | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Sources | Watch sources | `SourceTarget` | `1..n` | yes | Defines what can be watched or fetched. |
-| Watch sources | Fetch + cache | `ChangedSourceRef` | `0..n` | yes | Says which source records need fetching. |
-| Fetch + cache | Extract fragments | `RawSourceRecord` | `1..n` | yes | Stores exact source payloads with revision provenance. |
-| Extract fragments | Normalize claims | `SourceFragment` | `0..n` per raw record | yes | Keeps source-shaped extracted pieces before normalization. |
-| Normalize claims + overrides | Rebuild planner | `Claim` | `0..n` per fragment | yes | Normalized assertion derived from one or more fragments. |
-| Normalize claims + overrides | Rebuild planner | `OverrideCandidate` | `0..n` per fragment | yes | Structured signal that a source may alter or invalidate other claims. |
-| Rebuild planner | Resolution inputs | `AffectedPagePlan` | `0..n` | yes | Maps changed claims/entities to local pages needing work. |
-| Rebuild planner | Review queue | `ReviewItem` | `0..n` | yes | Flags changed/conflicting/curated areas for human review. |
-| Curation store | Resolution inputs | `CurationOverride` | `0..n` | yes | Manual truth, notes, suppressions, and forced decisions. |
-| Resolution inputs | Resolve truth | `ResolutionInputBundle` | `1` per work unit | maybe | Claims, override candidates, curation, rules, and dependency context for one work unit. |
-| Resolve truth | Compile wiki | `ResolvedPageModel` | `1..n` | yes | Final page-ready truth with provenance and uncertainty. |
-| Compile wiki | Serve locally | `CompiledPage` | `1..n` | yes | Rendered page output, assets, and search/index entries. |
-| Browse + review | Curation store | `CurationEdit` | `0..n` | yes | User edit from the local wiki UI before validation/normalization. |
+| From | To | Interface | Persisted? | Purpose |
+| --- | --- | --- | --- | --- |
+| Sources | Watch sources | `SourceTarget` | yes | Defines what can be watched or fetched. |
+| Watch sources | Fetch + cache | `ChangedSourceRef` | yes | Says which source records need fetching. |
+| Fetch + cache | Extract fragments | `RawSourceRecord` | yes | Stores exact source payloads with revision provenance. |
+| Extract fragments | Normalize structured records | `SourceFragment` | yes | Keeps source-shaped extracted pieces before normalization. |
+| Extract fragments | LLM semantic classification | `SourceFragment` | maybe | Provides prose, tables, and source-shaped fragments for LLM-assisted semantic classification. |
+| LLM semantic classification | Normalize structured records | `StructuredCandidate` | yes | Candidate claim, classification, condition, or effect extracted from messy source text. |
+| Curation store | Normalize structured records | `CurationDecision` | yes | Human review decisions that accept, correct, reject, or pin generated candidates before they become trusted records. |
+| Normalize structured records | Rebuild planner | `Claim` | yes | Normalized assertion derived from one or more fragments or candidates. |
+| Normalize structured records | Rebuild planner | `Classification` | yes | Entity, page-kind, fact-kind, condition, or source-context label used by resolver rules. |
+| Normalize structured records | Rebuild planner | `EffectCandidate` | yes | Structured signal that a source may add, remove, move, qualify, or replace a specific claim. |
+| Rebuild planner | Resolution inputs | `AffectedPagePlan` | yes | Maps changed claims/entities to local pages needing work. |
+| Authority rules | Resolution inputs | `AuthorityRule` | yes | Hard source hierarchy and fact-scope rules used by deterministic resolution. |
+| Resolution inputs | Resolve truth | `ResolutionInputBundle` | maybe | Claims, classifications, effect candidates, authority rules, and dependency context for one resolver work unit. |
+| Resolve truth | Compile wiki | `ResolvedPageModel` | yes | Final page-ready truth with provenance and uncertainty. |
+| Compile wiki | Serve locally | `CompiledPage` | yes | Rendered page output, assets, and search/index entries. |
+| Browse + review | Curation store | `CurationEdit` | yes | User edit from the local wiki UI before validation/normalization. |
 
 ## Core contracts
+
+The shapes below are draft interface examples, not locked schemas. Expect them
+to change as real vertical slices expose missing fields, redundant fields, and
+unclear boundaries between contracts.
 
 ### `SourceTarget`
 
 Defines an upstream or local source that can be watched and fetched.
 
 ```yaml
-source_id: calamity_wiki
+source_id: infernum_wiki
 source_kind: mediawiki
-authority_tier: mod_official
-base_url: https://calamitymod.wiki.gg
-api_url: https://calamitymod.wiki.gg/api.php
+authority_tier: overhaul_official
+source_layer: overhaul
+built_on_source_ids:
+  - calamity_wiki
+base_url: https://infernummod.wiki.gg
+api_url: https://infernummod.wiki.gg/api.php
 watch_strategy: mediawiki_recent_changes
 fetch_strategy: mediawiki_revision
+authority_scopes:
+  - boss_behavior
+  - boss_phase
+  - infernum_mode
 enabled: true
 ```
 
@@ -166,15 +173,69 @@ evidence:
 confidence: source_extracted
 ```
 
-### `OverrideCandidate`
+### `Classification`
 
-Structured signal that a source changes how other claims should be interpreted.
-This is especially important for indirect overrides expressed in prose. LLM use
-should mainly produce records like this, not final resolved truth.
+Normalized label used by resolver rules. Classifications make authority rules
+simple by saying what a claim is about and when it applies.
 
 ```yaml
-override_id: override_01J...
-override_kind: replaces_behavior
+classification_id: class_01J...
+subject:
+  entity_ref: calamity_wiki:npc:The Devourer of Gods
+  entity_kind: boss
+labels:
+  page_kind:
+    - boss
+    - enemy_npc
+  fact_scope:
+    - boss_behavior
+    - infernum_mode
+conditions:
+  enabled_mods:
+    - calamity
+    - infernum
+evidence:
+  fragments:
+    - frag_01J...
+classifier:
+  kind: deterministic
+  confidence: high
+```
+
+### `StructuredCandidate`
+
+Unvalidated structured output from deterministic parsers or LLM-assisted
+semantic extraction. Candidates are not final truth. Normalization code should
+validate, split, merge, or reject them before they become claims,
+classifications, or effect candidates.
+
+```yaml
+candidate_id: cand_01J...
+candidate_kind: claim
+subject_hint: The Devourer of Gods
+fact_scope: boss_behavior
+conditions:
+  enabled_mods:
+    - infernum
+raw_value: "Infernum changes the fight behavior."
+evidence:
+  fragments:
+    - frag_01J...
+extractor:
+  kind: llm
+  confidence: medium
+status: candidate
+```
+
+### `EffectCandidate`
+
+Structured signal that a source may add, remove, move, qualify, or replace a
+specific claim. This is especially important for indirect effects expressed in
+prose. LLM use may produce records like this, but not final resolved truth.
+
+```yaml
+effect_id: effect_01J...
+effect_kind: replaces_behavior
 target:
   entity_ref: calamity_wiki:npc:The Devourer of Gods
   entity_kind: boss
@@ -194,6 +255,25 @@ classifier:
 status: candidate
 ```
 
+### `AuthorityRule`
+
+Scoped resolver rule. These rules are intentionally simple when claims,
+classifications, and source hierarchy are precise. Most rules should express a
+one-way source stack, not mutual mod patching.
+
+```yaml
+rule_id: infernum_boss_behavior_priority
+claim_scope: boss_behavior
+when:
+  enabled_mods:
+    - infernum
+prefer_source_id: infernum_wiki
+over_source_ids:
+  - calamity_wiki
+relationship: built_on
+reason: Infernum-specific boss behavior applies when Infernum is enabled.
+```
+
 ### `AffectedPagePlan`
 
 Planner output that says which local pages need resolution/compilation work.
@@ -210,25 +290,7 @@ affected_pages:
   - local_page_id: boss:the_devourer_of_gods
     page_kind: boss
     action: re_resolve_and_recompile
-review_required: false
 reason: source_claim_changed
-```
-
-### `ReviewItem`
-
-Human review work generated by the rebuild planner.
-
-```yaml
-review_item_id: review_01J...
-local_page_id: boss:the_devourer_of_gods
-status: open
-severity: medium
-reason: changed_claim_touches_curated_topic
-changed_claim_ids:
-  - claim_01J...
-curation_refs:
-  - curation_01J...
-suggested_action: inspect_and_keep_or_update_override
 ```
 
 ### `CurationEdit`
@@ -240,24 +302,31 @@ edit_id: edit_01J...
 local_page_id: boss:the_devourer_of_gods
 user: local
 created_at: 2026-07-02T16:00:00Z
-edit_kind: override_claim
-target_claim_kind: boss_behavior
-body: "Infernum replaces this phase behavior; prefer Infernum source."
+edit_kind: correct_candidate
+target_candidate_id: cand_01J...
+body: "This is an Infernum-only boss behavior claim, not generic Calamity behavior."
 ```
 
-### `CurationOverride`
+### `CurationDecision`
 
-Validated durable curation input consumed by the resolver.
+Validated durable curation input consumed during normalization. Most curation
+decisions control generated structure: accepting, editing, rejecting, or pinning
+LLM-produced candidates before they become trusted claims, classifications, or
+effect candidates.
 
 ```yaml
 curation_id: curation_01J...
 local_page_id: boss:the_devourer_of_gods
-scope:
-  entity_ref: calamity_wiki:npc:The Devourer of Gods
-  claim_kind: boss_behavior
-override_kind: prefer_source
-preferred_source_id: infernum_wiki
-reason: Infernum behavior supersedes base Calamity in this modpack.
+decision_kind: correct_candidate
+target:
+  candidate_id: cand_01J...
+reviewed_output:
+  candidate_kind: classification
+  fact_scope: boss_behavior
+  conditions:
+    enabled_mods:
+      - infernum
+reason: The source text describes Infernum behavior only.
 created_from_edit_id: edit_01J...
 active: true
 ```
@@ -274,10 +343,12 @@ entity_refs:
   - calamity_wiki:npc:The Devourer of Gods
 claim_ids:
   - claim_01J...
-override_ids:
-  - override_01J...
-curation_ids:
-  - curation_01J...
+classification_ids:
+  - class_01J...
+effect_ids:
+  - effect_01J...
+authority_rule_ids:
+  - infernum_boss_behavior_priority
 ruleset_id: infernal_eclipse_default
 ```
 
@@ -309,7 +380,7 @@ provenance_summary:
   sources:
     - calamity_wiki
     - infernum_wiki
-  curation_ids:
+  review_decision_ids:
     - curation_01J...
 ```
 
@@ -332,12 +403,14 @@ source_model_hash: "..."
 ## Persistence boundaries
 
 - Store `SourceTarget`, `ChangedSourceRef`, `RawSourceRecord`,
-  `SourceFragment`, `Claim`, `OverrideCandidate`, `AffectedPagePlan`, `ReviewItem`,
-  `CurationOverride`, `ResolvedPageModel`, and `CompiledPage`.
-- `ResolutionInputBundle` can be rebuilt from persisted claims, override
-  candidates, plans, curation, and rules, so it can start as transient.
-- `CurationEdit` should be stored at least as an audit log if curation happens
-  through the local website.
+  `SourceFragment`, `StructuredCandidate`, `Claim`, `Classification`,
+  `EffectCandidate`, `AuthorityRule`, `AffectedPagePlan`, `CurationDecision`,
+  `ResolvedPageModel`, and `CompiledPage`.
+- `ResolutionInputBundle` can be rebuilt from persisted claims,
+  classifications, effect candidates, plans, and rules, so it can
+  start as transient.
+- `CurationEdit` should be stored at least as an audit log if candidate review
+  or local curation happens through the local website.
 - Raw source payloads should be immutable by source revision.
 - Compiled pages are disposable build outputs.
 
@@ -345,8 +418,12 @@ source_model_hash: "..."
 
 - Prefer `fragment` over `chunk` for extracted source pieces. `chunk` is likely
   to mean text split for search or LLM context later.
-- Use `claim` for normalized assertions that the resolver can compare,
-  override, or reject.
-- Use `effect_candidate` for normalized override signals that may modify,
-  invalidate, or lower-priority other claims.
-- Use `resolved_claim` only after authority rules and curation have been applied.
+- Use `claim` for normalized assertions that the resolver can compare, rank, or
+  reject.
+- Use `classification` for labels that make scoped authority rules simple.
+- Use `effect_candidate` for normalized signals that may add, remove, move,
+  qualify, modify, invalidate, or lower-priority specific claims.
+- Use `curation_decision` for human review of generated candidates, corrected
+  classifications, suppressions, and pinned decisions.
+- Use `resolved_claim` only after authority rules have been applied to normalized
+  records.

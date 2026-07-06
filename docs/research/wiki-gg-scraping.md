@@ -494,7 +494,7 @@ Initial fact-category priorities:
 5. Boss stats via infobox parsetree/rendered HTML
 6. Class setups via Calamity Cargo and rendered markup cleanup
 7. Strategy/prose sections via section extraction and later LLM-assisted
-   classification into claims or override candidates
+   classification into claims, classifications, or effect candidates
 
 ## Data quality notes
 
@@ -789,10 +789,10 @@ The rendered links include existing Calamity/Thorium concepts such as:
 - `Blood Harvest`
 - `Bone Baton`
 
-This should be treated as a source of override candidates, not just new-item
+This should be treated as a source of effect candidates, not just new-item
 claims. For example, if the page says an existing Calamity weapon has been
 reworked into a Bard weapon, an LLM-assisted classifier may be useful for
-turning that prose into a structured crossmod override candidate:
+turning that prose into a structured crossmod effect candidate:
 
 ```text
 target: Anahita's Arpeggio
@@ -818,7 +818,7 @@ The normal wiki.gg adapter still works, but the extractor needs a source-specifi
    - `Item infobox (thorium)`
 5. Extract `drop infobox` templates from raw wikitext/parsetree.
 6. Query `Recipes0` with `modname="Thorium Crossmod"`, exclude localized pages, then map recipes back to known addon items.
-7. Parse prose sections from item-change/mechanics pages as override candidates.
+7. Parse prose sections from item-change/mechanics pages as effect candidates.
 8. Preserve sparse/uncertain status aggressively.
 
 Recommended confidence handling:
@@ -828,7 +828,7 @@ Recommended confidence handling:
 - `drop infobox` direct template: medium wiki claim.
 - DPL-generated list membership: medium-low until confirmed by the linked item page.
 - Item-change prose: medium, but semantically important; mark as a crossmod
-  override candidate and queue for review if it conflicts with Calamity/Thorium
+  effect candidate and queue for review if it conflicts with Calamity/Thorium
   pages.
 - Missing linked pages: review item, not hard failure.
 

@@ -42,8 +42,8 @@ from diagrams alone:
 - which page kinds share structure
 - where fragments are too source-shaped
 - where claims are too vague or too specific
-- where prose should become override candidates instead of ordinary claims
+- where prose should become effect candidates instead of ordinary claims
 - which interfaces are useful and which are ceremony
-- where LLM-assisted classification and manual resolution need to fit
+- where LLM-assisted classification and manual candidate review need to fit
 
 The architecture should become stricter as vertical slices prove it, not before.
